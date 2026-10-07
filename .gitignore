@@ -1,0 +1,26 @@
+# Binaries and build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.tmp
+*.zip
+test_audit*
+bin/
+App Audit/
+App Audit.zip
+
+# Cache files
+*.cache
+resolved_cache.json
+provenance_cache.json
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS generated files
+.DS_Store
+Thumbs.db
