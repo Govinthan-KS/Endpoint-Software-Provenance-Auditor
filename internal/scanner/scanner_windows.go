@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"github.com/example/appaudit/internal/discovery"
 	"github.com/example/appaudit/internal/model"
 	"golang.org/x/sys/windows"
 	"golang.org/x/sys/windows/registry"
@@ -71,7 +72,6 @@ func (s *windowsScanner) Scan() ([]model.Application, error) {
 	seenCanonicalPaths := make(map[string]bool)
 	seenNames := make(map[string]bool)
 
-	// 1. Scan Start Menu (.lnk) shortcuts (primary launchable user applications)
 	startApps := s.scanStartMenu()
 	for _, app := range startApps {
 		canPath := canonicalPath(app.Path)
@@ -91,7 +91,6 @@ func (s *windowsScanner) Scan() ([]model.Application, error) {
 		discovered = append(discovered, app)
 	}
 
-	// 2. Scan Windows Registry (HKLM & HKCU, 64-bit and WOW6432Node)
 	regApps, _ := s.scanRegistry()
 	for _, app := range regApps {
 		canPath := canonicalPath(app.Path)
@@ -111,7 +110,6 @@ func (s *windowsScanner) Scan() ([]model.Application, error) {
 		discovered = append(discovered, app)
 	}
 
-	// 3. Scan $PATH directories at rest (strictly standalone .exe, excluding OS system folders)
 	pathApps := s.scanPathDirectories()
 	for _, app := range pathApps {
 		canPath := canonicalPath(app.Path)
@@ -121,7 +119,6 @@ func (s *windowsScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 4. Scan Active Running Processes (grouped by executable, excluding OS system internals)
 	procApps, _ := s.scanProcesses()
 	for _, app := range procApps {
 		canPath := canonicalPath(app.Path)
@@ -417,13 +414,11 @@ func findExecutableInDir(dir, appName string) string {
 
 	searchDirs := []string{cleanDir, filepath.Join(cleanDir, "bin")}
 	for _, sDir := range searchDirs {
-		// 1. Direct match: <dir>\<appName>.exe
 		candidate := filepath.Join(sDir, appName+".exe")
 		if cfi, err := os.Stat(candidate); err == nil && !cfi.IsDir() {
 			return candidate
 		}
 
-		// 2. First word match: <dir>\<firstWord>.exe
 		if firstWordName != "" {
 			candidate = filepath.Join(sDir, firstWordName+".exe")
 			if cfi, err := os.Stat(candidate); err == nil && !cfi.IsDir() {
@@ -431,7 +426,6 @@ func findExecutableInDir(dir, appName string) string {
 			}
 		}
 
-		// 3. Stripped name match: <dir>\<cleanAppName>.exe
 		if cleanAppName != "" {
 			candidate = filepath.Join(sDir, cleanAppName+".exe")
 			if cfi, err := os.Stat(candidate); err == nil && !cfi.IsDir() {
@@ -439,7 +433,6 @@ func findExecutableInDir(dir, appName string) string {
 			}
 		}
 
-		// 4. Scan files in directory for primary executable
 		entries, err := os.ReadDir(sDir)
 		if err == nil {
 			for _, e := range entries {
@@ -626,4 +619,43 @@ func (s *windowsScanner) scanProcesses() ([]model.Application, error) {
 	}
 
 	return apps, nil
+}
+
+// FullScan performs a high-throughput targeted tier scan with aggressive subtree pruning
+// to discover all non-system applications in ~1-3 seconds.
+func (s *windowsScanner) FullScan(progress ProgressFunc) ([]model.Application, error) {
+	var discovered []model.Application
+	seenCanonicalPaths := make(map[string]bool)
+
+	quickApps, _ := s.Scan()
+	for _, app := range quickApps {
+		can := canonicalPath(app.Path)
+		if can != "" && !seenCanonicalPaths[can] {
+			seenCanonicalPaths[can] = true
+			discovered = append(discovered, app)
+		}
+	}
+	if progress != nil {
+		progress(len(discovered), "Curated installed applications")
+	}
+
+	roots := discovery.CollectTargetedRoots()
+	res, err := discovery.ScanTargeted(roots, func(count int, path string) {
+		if progress != nil {
+			progress(len(discovered)+count, path)
+		}
+	})
+	if err != nil {
+		return discovered, err
+	}
+
+	for _, app := range res.Applications {
+		can := canonicalPath(app.Path)
+		if can != "" && !seenCanonicalPaths[can] {
+			seenCanonicalPaths[can] = true
+			discovered = append(discovered, app)
+		}
+	}
+
+	return discovered, nil
 }

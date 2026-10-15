@@ -59,7 +59,6 @@ func (p *PEInspector) Inspect(filePath string) (BinaryMetadata, error) {
 		}
 	}
 
-	// 1. Version Resource Extraction (.rsrc)
 	rsrc := peFile.Section(".rsrc")
 	if rsrc != nil {
 		sr := rsrc.Open()
@@ -76,28 +75,79 @@ func (p *PEInspector) Inspect(filePath string) (BinaryMetadata, error) {
 			meta.Comments = extractPEString(data, "Comments")
 		}
 	}
+	sanitizeWrapperStub(&meta)
 
-	// 2. Authenticode Certificate Extraction
 	if securityDir.Size > 0 && securityDir.VirtualAddress > 0 {
 		meta.IsSigned = true
-		subject, issuer, valid := parseAuthenticodeCert(filePath, int64(securityDir.VirtualAddress), int64(securityDir.Size))
+		subject, issuer, hasCert := parseAuthenticodeCert(filePath, int64(securityDir.VirtualAddress), int64(securityDir.Size))
 		if subject != "" {
 			meta.CertSubject = subject
 			meta.CertIssuer = issuer
-			meta.SignatureValid = valid
+			isTrusted := verifyWinTrust(filePath)
+			meta.SignatureValid = hasCert && isTrusted
 			if meta.CompanyName == "" {
 				meta.CompanyName = subject
 			}
 		}
 	}
 
-	// 3. Go & Ecosystem Build Metadata
 	meta.BuildInfo = InspectBuildMetadata(filePath)
-
-	// 4. Embedded Component Signatures
 	meta.Components = DetectEmbeddedComponents(filePath)
 
+	sanitizeWrapperStub(&meta)
 	return meta, nil
+}
+
+// IsWrapperString checks whether a string contains known wrapper/stub signatures.
+func IsWrapperString(s string) bool {
+	lower := strings.ToLower(s)
+	wrapperPatterns := []string{
+		"simple launcher user",
+		"simple launcher",
+		"distlib",
+		"pyinstaller",
+		"nullsoft pip",
+		"pip-tools",
+	}
+	for _, p := range wrapperPatterns {
+		if strings.Contains(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// sanitizeWrapperStub detects generic launcher stubs and clears polluted metadata fields.
+func sanitizeWrapperStub(meta *BinaryMetadata) {
+	fields := []string{
+		meta.CompanyName,
+		meta.FileDescription,
+		meta.ProductName,
+		meta.Comments,
+		meta.InternalName,
+		meta.OriginalFilename,
+	}
+	isStub := false
+	for _, f := range fields {
+		if f != "" && IsWrapperString(f) {
+			isStub = true
+			break
+		}
+	}
+	if !isStub {
+		return
+	}
+
+	meta.IsWrapperStub = true
+	if IsWrapperString(meta.CompanyName) {
+		meta.CompanyName = ""
+	}
+	if IsWrapperString(meta.FileDescription) {
+		meta.FileDescription = ""
+	}
+	if IsWrapperString(meta.ProductName) {
+		meta.ProductName = ""
+	}
 }
 
 // parseAuthenticodeCert extracts the X.509 signing certificate subject and issuer from the PE certificate directory.
@@ -138,8 +188,33 @@ func parseAuthenticodeCert(filePath string, offset, size int64) (subject, issuer
 		return "Authenticode Signed Binary", "", true
 	}
 
-	// Leaf certificate is typically the code-signing certificate
-	leaf := certs[0]
+	// Find the end-entity (leaf) code-signing certificate
+	var leaf *x509.Certificate
+	for _, c := range certs {
+		if !c.IsCA {
+			for _, eku := range c.ExtKeyUsage {
+				if eku == x509.ExtKeyUsageCodeSigning {
+					leaf = c
+					break
+				}
+			}
+			if leaf != nil {
+				break
+			}
+		}
+	}
+	if leaf == nil {
+		for _, c := range certs {
+			if !c.IsCA {
+				leaf = c
+				break
+			}
+		}
+	}
+	if leaf == nil {
+		leaf = certs[0]
+	}
+
 	sub := leaf.Subject.CommonName
 	if len(leaf.Subject.Organization) > 0 {
 		sub = leaf.Subject.Organization[0]

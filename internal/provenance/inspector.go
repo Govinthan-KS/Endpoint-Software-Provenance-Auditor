@@ -22,6 +22,7 @@ type BinaryMetadata struct {
 	BuildInfo        *BuildMetadata    `json:"build_info,omitempty"`
 	Components       []string          `json:"components,omitempty"`
 	ExtraStrings     map[string]string `json:"extra_strings,omitempty"`
+	IsWrapperStub    bool              `json:"is_wrapper_stub,omitempty"`
 }
 
 // BinaryInspector defines the contract for platform-specific binary format analysis.

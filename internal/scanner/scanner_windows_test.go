@@ -1,13 +1,15 @@
 //go:build windows
 
-package scanner
+package scanner_test
 
 import (
 	"testing"
+
+	"github.com/example/appaudit/internal/scanner"
 )
 
 func TestWindowsScanner(t *testing.T) {
-	s := newPlatformScanner()
+	s := scanner.New()
 	apps, err := s.Scan()
 	if err != nil {
 		t.Fatalf("Scan failed: %v", err)
@@ -18,11 +20,25 @@ func TestWindowsScanner(t *testing.T) {
 	}
 }
 
-func BenchmarkWindowsScanner(b *testing.B) {
-	s := newPlatformScanner()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = s.Scan()
+func TestWindowsScanner_FullScan(t *testing.T) {
+	s := scanner.New()
+	var progressReports int
+	apps, err := s.FullScan(func(discoveredCount int, currentPath string) {
+		progressReports++
+	})
+	if err != nil {
+		t.Fatalf("FullScan failed: %v", err)
+	}
+	t.Logf("FullScan discovered %d applications (%d progress callbacks)", len(apps), progressReports)
+	if len(apps) == 0 {
+		t.Errorf("Expected to discover applications during FullScan, got 0")
 	}
 }
 
+func BenchmarkWindowsScanner(b *testing.B) {
+	s := scanner.New()
+	b.ResetTimer()
+	for b.Loop() {
+		_, _ = s.Scan()
+	}
+}

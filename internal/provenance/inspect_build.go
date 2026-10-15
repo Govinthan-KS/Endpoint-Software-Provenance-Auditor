@@ -50,28 +50,24 @@ func inspectOtherEcosystems(filePath string) *BuildMetadata {
 	n, _ := io.ReadFull(f, buf)
 	data := buf[:n]
 
-	// 1. Rust detection
 	if bytes.Contains(data, []byte("rustc/")) || bytes.Contains(data, []byte("CARGO_PKG_NAME")) || bytes.Contains(data, []byte(".cargo/registry")) {
 		return &BuildMetadata{
 			Ecosystem: "rust",
 		}
 	}
 
-	// 2. .NET CLR detection
 	if bytes.Contains(data, []byte("mscoree.dll")) || bytes.Contains(data, []byte("_CorExeMain")) || bytes.Contains(data, []byte("BSJB")) {
 		return &BuildMetadata{
 			Ecosystem: "dotnet",
 		}
 	}
 
-	// 3. PyInstaller / Python embedded bundle
 	if bytes.Contains(data, []byte("pyi-windows-msvcr")) || bytes.Contains(data, []byte("Py_Initialize")) || bytes.Contains(data, []byte("MEI")) {
 		return &BuildMetadata{
 			Ecosystem: "python_pyinstaller",
 		}
 	}
 
-	// 4. Electron / Node
 	if bytes.Contains(data, []byte("ELECTRON_RUN_AS_NODE")) || bytes.Contains(data, []byte("atom-shell")) || bytes.Contains(data, []byte("v8::internal")) {
 		return &BuildMetadata{
 			Ecosystem: "electron_node",

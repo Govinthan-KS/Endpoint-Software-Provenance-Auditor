@@ -12,13 +12,15 @@ import (
 
 // CacheRecord represents a cached provenance evaluation result keyed by cryptographic hash.
 type CacheRecord struct {
-	SHA256         string                `json:"sha256"`
-	Classification Classification        `json:"classification"`
-	Confidence     Confidence            `json:"confidence"`
-	Evidence       []Evidence            `json:"evidence"`
-	Candidates     []ProvenanceCandidate `json:"candidates,omitempty"`
-	CachedAt       time.Time             `json:"cached_at"`
-	ExpiresAt      time.Time             `json:"expires_at"`
+	SHA256             string                `json:"sha256"`
+	Classification     Classification        `json:"classification,omitempty"`
+	Confidence         Confidence            `json:"confidence,omitempty"`
+	Evidence           []Evidence            `json:"evidence,omitempty"`
+	Candidates         []ProvenanceCandidate `json:"candidates,omitempty"`
+	Inspection         BinaryMetadata        `json:"inspection,omitempty"`
+	HasBinaryForensics bool                  `json:"has_binary_forensics,omitempty"`
+	CachedAt           time.Time             `json:"cached_at"`
+	ExpiresAt          time.Time             `json:"expires_at"`
 }
 
 // ProvenanceCache provides thread-safe persistent caching indexed by artifact SHA-256 digest.
@@ -147,6 +149,41 @@ func (c *ProvenanceCache) Set(sha256Hash string, res ClassificationResult) {
 	c.dirty = true
 }
 
+// SetBinaryEvidence stores forensic inspection metadata and binary-level evidence for a binary hash.
+func (c *ProvenanceCache) SetBinaryEvidence(sha256Hash string, inspection BinaryMetadata, evidence []Evidence) {
+	key := strings.ToLower(strings.TrimSpace(sha256Hash))
+	if key == "" {
+		return
+	}
+
+	now := time.Now()
+	rec := CacheRecord{
+		SHA256:             key,
+		Inspection:         inspection,
+		Evidence:           evidence,
+		HasBinaryForensics: true,
+		CachedAt:           now,
+		ExpiresAt:          now.Add(30 * 24 * time.Hour), // 30 days for immutable cryptographic binary evidence
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records[key] = rec
+	c.dirty = true
+}
+
+// GetBinaryEvidence retrieves cached forensic inspection metadata and binary-level evidence by SHA-256.
+func (c *ProvenanceCache) GetBinaryEvidence(sha256Hash string) (BinaryMetadata, []Evidence, bool) {
+	rec, found := c.Get(sha256Hash)
+	if !found {
+		return BinaryMetadata{}, nil, false
+	}
+	if rec.HasBinaryForensics {
+		return rec.Inspection, rec.Evidence, true
+	}
+	return BinaryMetadata{}, nil, false
+}
+
 // Save flushes modified records to disk atomically.
 func (c *ProvenanceCache) Save() error {
 	c.mu.Lock()
@@ -180,3 +217,41 @@ func (c *ProvenanceCache) Save() error {
 	c.dirty = false
 	return nil
 }
+
+// Delete removes a specific artifact digest from the cache and saves to disk.
+func (c *ProvenanceCache) Delete(sha256Hash string) bool {
+	c.mu.Lock()
+	key := strings.ToLower(strings.TrimSpace(sha256Hash))
+	_, exists := c.records[key]
+	if exists {
+		delete(c.records, key)
+		c.dirty = true
+	}
+	c.mu.Unlock()
+
+	if exists {
+		_ = c.Save()
+		return true
+	}
+	return false
+}
+
+// Clear purges all in-memory cache records and deletes the on-disk cache file.
+func (c *ProvenanceCache) Clear() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.records = make(map[string]CacheRecord)
+	c.dirty = false
+	if c.filePath != "" {
+		_ = os.Remove(c.filePath)
+	}
+	return nil
+}
+
+// Count returns the number of active cached records in the cache.
+func (c *ProvenanceCache) Count() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.records)
+}
+

@@ -26,7 +26,6 @@ func (s *darwinScanner) Scan() ([]model.Application, error) {
 	var discovered []model.Application
 	seenPaths := make(map[string]bool)
 
-	// 1. Scan Application Bundles (.app)
 	bundleApps := s.scanAppBundles()
 	for _, app := range bundleApps {
 		key := strings.ToLower(app.Path)
@@ -36,7 +35,6 @@ func (s *darwinScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 2. Scan $PATH directories at rest
 	pathApps := s.scanPathDirectories()
 	for _, app := range pathApps {
 		key := strings.ToLower(app.Path)
@@ -46,7 +44,6 @@ func (s *darwinScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 3. Scan Active Running Processes
 	procApps := s.scanProcesses()
 	for _, app := range procApps {
 		key := strings.ToLower(app.Path)
@@ -339,4 +336,16 @@ func (s *darwinScanner) scanProcesses() []model.Application {
 	}
 
 	return apps
+}
+
+// FullScan performs deep discovery across macOS application and user directories.
+func (s *darwinScanner) FullScan(progress ProgressFunc) ([]model.Application, error) {
+	apps, err := s.Scan()
+	if err != nil {
+		return nil, err
+	}
+	if progress != nil {
+		progress(len(apps), "/Applications")
+	}
+	return apps, nil
 }

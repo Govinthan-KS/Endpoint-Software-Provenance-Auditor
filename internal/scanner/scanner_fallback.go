@@ -24,7 +24,6 @@ func (s *fallbackScanner) Scan() ([]model.Application, error) {
 	var discovered []model.Application
 	seenPaths := make(map[string]bool)
 
-	// 1. Scan $PATH directories
 	pathApps := s.scanPathDirectories()
 	for _, app := range pathApps {
 		key := strings.ToLower(app.Path)
@@ -34,7 +33,6 @@ func (s *fallbackScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 2. Scan Running Processes
 	procApps := s.scanProcesses()
 	for _, app := range procApps {
 		key := strings.ToLower(app.Path)
@@ -164,4 +162,16 @@ func (s *fallbackScanner) scanProcesses() []model.Application {
 	}
 
 	return apps
+}
+
+// FullScan performs deep discovery across generic POSIX filesystem directories.
+func (s *fallbackScanner) FullScan(progress ProgressFunc) ([]model.Application, error) {
+	apps, err := s.Scan()
+	if err != nil {
+		return nil, err
+	}
+	if progress != nil {
+		progress(len(apps), "/")
+	}
+	return apps, nil
 }

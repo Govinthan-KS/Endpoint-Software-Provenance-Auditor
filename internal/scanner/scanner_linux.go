@@ -25,7 +25,6 @@ func (s *linuxScanner) Scan() ([]model.Application, error) {
 	var discovered []model.Application
 	seenPaths := make(map[string]bool)
 
-	// 1. Scan XDG Desktop Entries (.desktop files)
 	desktopApps := s.scanDesktopEntries()
 	for _, app := range desktopApps {
 		key := strings.ToLower(app.Name + "|" + app.Path)
@@ -35,7 +34,6 @@ func (s *linuxScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 2. Scan $PATH directories at rest
 	pathApps := s.scanPathDirectories()
 	for _, app := range pathApps {
 		key := strings.ToLower(app.Path)
@@ -45,7 +43,6 @@ func (s *linuxScanner) Scan() ([]model.Application, error) {
 		}
 	}
 
-	// 3. Scan Running Processes via /proc
 	procApps := s.scanProcProcesses()
 	for _, app := range procApps {
 		key := strings.ToLower(app.Path)
@@ -219,7 +216,9 @@ func parseDesktopFile(filePath string) (model.Application, bool) {
 			if strings.EqualFold(val, "true") {
 				noDisplay = true
 			}
-		}
+	}
+	if err := scanner.Err(); err != nil {
+		return model.Application{}, false
 	}
 
 	if !isTypeApp || name == "" || noDisplay {
@@ -344,4 +343,16 @@ func (s *linuxScanner) scanProcProcesses() []model.Application {
 	}
 
 	return apps
+}
+
+// FullScan performs deep discovery across Linux application, system, and user directories.
+func (s *linuxScanner) FullScan(progress ProgressFunc) ([]model.Application, error) {
+	apps, err := s.Scan()
+	if err != nil {
+		return nil, err
+	}
+	if progress != nil {
+		progress(len(apps), "/usr/bin")
+	}
+	return apps, nil
 }

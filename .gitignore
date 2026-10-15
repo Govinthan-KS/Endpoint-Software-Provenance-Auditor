@@ -1,5 +1,6 @@
 # Binaries and build artifacts
 *.exe
+*.exe~
 *.dll
 *.so
 *.dylib
@@ -7,11 +8,20 @@
 *.zip
 test_audit*
 bin/
+audit.exe
 App Audit/
 App Audit.zip
+test-corpus/
+test-corpus-2/
+test-corpus-3/
+testdata/corpus/
+scratch/
 
-# Cache files
+# Runtime and Cache files
 *.cache
+*.log
+credentials.json
+company_manifest.json
 resolved_cache.json
 provenance_cache.json
 
@@ -24,3 +34,12 @@ provenance_cache.json
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Personal and assistant session files
+CHAT_CONVERSATION.md
+CHAT_EXPORT.md
+PROJECT_STATE.md
+
+# Local model definitions
+Modelfile*
+

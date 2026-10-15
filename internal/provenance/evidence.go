@@ -19,11 +19,21 @@ const (
 type Confidence string
 
 const (
-	ConfidenceVeryHigh Confidence = "VERY_HIGH"
-	ConfidenceHigh     Confidence = "HIGH"
-	ConfidenceMedium   Confidence = "MEDIUM"
-	ConfidenceLow      Confidence = "LOW"
-	ConfidenceNone     Confidence = "NONE"
+	ConfidenceDeterministic Confidence = "DETERMINISTIC"
+	ConfidenceVeryHigh      Confidence = "VERY_HIGH"
+	ConfidenceHigh          Confidence = "HIGH"
+	ConfidenceMedium        Confidence = "MEDIUM"
+	ConfidenceLow           Confidence = "LOW"
+	ConfidenceNone          Confidence = "NONE"
+)
+
+// NetworkMode defines the network operational policy.
+type NetworkMode string
+
+const (
+	NetworkOff      NetworkMode = "off"
+	NetworkHashOnly NetworkMode = "hash-only"
+	NetworkOn       NetworkMode = "on"
 )
 
 // EvidenceType categorizes the specific kind of evidence collected.
@@ -38,6 +48,7 @@ const (
 	EvidenceProjectMatch       EvidenceType = "project_match"
 	EvidenceComponentMatch     EvidenceType = "component_match"
 	EvidencePackageMatch       EvidenceType = "package_match"
+	EvidenceLocalReceipt       EvidenceType = "local_receipt"
 	EvidenceSearchResult       EvidenceType = "search_result"
 	EvidenceInstallMetadata    EvidenceType = "install_metadata"
 	EvidencePathHeuristic      EvidenceType = "path_heuristic"
