@@ -1,0 +1,7 @@
+use_default_settings: true
+server:
+  secret_key: "appaudit_local_secret_key_32chars_long!!"
+search:
+  formats:
+    - html
+    - json
