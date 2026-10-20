@@ -1,128 +1,217 @@
-# AppAudit - Endpoint Software Provenance Auditor (v2.0.0)
+# AppAudit - Endpoint Software Auditor (v2.1.0)
 
-A production-grade, ultra-lightweight, zero-external-runtime, cross-platform CLI tool in Go that automatically scans host endpoints and establishes evidence-based software provenance.
+A lightweight, zero-external-runtime CLI utility in Go that discovers applications installed on an endpoint, deterministically filters out recognized software, and cross-checks unrecognized applications against digital sources using Google Search-grounded reasoning.
 
-Rather than guessing or relying on fragile filename heuristics, AppAudit computes local cryptographic SHA-256 fingerprints, deeply inspects binary build metadata (Go `debug/buildinfo`, Authenticode X.509 certs, PE/Mach-O/ELF headers), and queries pluggable provenance providers to classify every executable into:
-
-1. **`THIRD_PARTY`** — sufficiently strong evidence that the executable/software originated externally.
-2. **`COMPANY`** — sufficiently strong evidence that the executable is company-developed or company-owned.
-3. **`UNKNOWN`** — provenance cannot be established with sufficient confidence.
-
-> **Fundamental Principle:**
-> **No public match ≠ company-developed.**
-> When external provenance cannot be established and company provenance cannot be established, the system returns `UNKNOWN`. Absence of public evidence is never twisted into a false claim of company ownership.
+```text
+                    ENDPOINT APPLICATION DISCOVERY
+                (Start Menu, Registry, Program Files, PATH)
+                                  ↓
+                   DETERMINISTIC RECOGNITION FILTER
+            (Authenticode signatures, OS manifests, Go buildinfo)
+                                  ↓
+         ┌────────────────────────┴────────────────────────┐
+         ↓                                                 ↓
+    RECOGNIZED                                       UNRECOGNIZED
+(Filtered Out / Local)                         (Interactive / CLI Gemini)
+         ↓                                                 ↓
+    THIRD_PARTY                                  GEMINI + GOOGLE SEARCH
+(Sub-millisecond verdict)                                  ↓
+                                                 Identify App & Project
+                                                           ↓
+                                                Collect Evidence & Sources
+                                                           ↓
+                                                 ┌─────────┴─────────┐
+                                                 ↓                   ↓
+                                            Identified          Inconclusive
+                                                 ↓                   ↓
+                                            THIRD_PARTY           UNKNOWN
+                                                 ↓                   ↓
+                                            STORE CACHE         STORE CACHE
+                                                 ↓                   ↓
+                                            SUBSEQUENT RUN: CACHE HIT (0ms)
+```
 
 ---
 
-## Key Capabilities & Architectural Pillars
+## The Core Product Workflow
 
-### 1. Cryptographic SHA-256 Fingerprinting
-- Every executable analyzed has a streaming local SHA-256 digest computed without loading the whole file into RAM.
-- **Privacy & OPSEC Guarantee:** Executables and binary contents are **NEVER uploaded** to external services. All hashing is performed 100% locally.
+1. **Endpoint Application Discovery**
+   * Discovers installed desktop applications, portable binaries, and suites across Windows Start Menu shortcuts, Registry Uninstall keys (32-bit & 64-bit), standard program directories, and user PATH.
 
-### 2. Deep Binary & Build Metadata Extraction
-- **Go Binaries (`debug/buildinfo.ReadFile`)**: Inspects compiled Go binaries for main module paths (e.g., `github.com/junegunn/fzf`), versions, dependency graphs, and build settings.
-- **Authenticode Signatures & X.509 Certificates**: Parses PE Security Directories to extract Subject Common Names, Organizations, and Issuers. Distinguishes between trusted external vendors, internal company certificates, and unsigned binaries.
-- **Embedded Component Signatures**: Detects static third-party library signatures (FFmpeg, SQLite, OpenSSL, libcurl, zlib) and records them as component-level evidence without falsely claiming the entire executable is that component.
-- **PE Version Resources**: Extracts `ProductName`, `CompanyName`, `FileDescription`, `OriginalFilename`, `InternalName`, `ProductVersion`, and `LegalCopyright`.
+2. **Deterministic Recognition Filter**
+   * Fast, local-first evaluation filters out software that is already legitimately recognized:
+     * **Authenticode Signatures**: Valid cryptographic digital signatures from recognized commercial software publishers (Microsoft, Google, JetBrains, Docker, etc.).
+     * **OS Package Registration**: Officially installed software registered in host system installer manifests.
+     * **Compiler Build Metadata**: Binaries with embedded compiler module paths pointing to public open-source project repositories (e.g. `github.com/...`).
 
-### 3. Generic Filename Collision Protection
-Common dictionary action nouns (e.g., `sync.exe`, `update.exe`, `helper.exe`, `agent.exe`, `runner.exe`, `audit.exe`, `service.exe`, `manager.exe`, `launcher.exe`, `client.exe`, `proxy.exe`, `gateway.exe`) are explicitly protected against false-positive promotion. Search results or package matches on a generic word alone are treated as weak candidates and result in `UNKNOWN` unless corroborated by cryptographic hashes, trusted publisher signatures, or verified build metadata.
+3. **Digital Research on Unrecognized Applications**
+   * Applications that remain unrecognized after deterministic filtering are evaluated by Gemini using live Google Search grounding:
+     * Discovers official vendor websites, source repositories, documentation, and releases.
+     * Corroborates whether the binary represents legitimate third-party open-source or commercial software.
+     * Displays concise verdict, identified project/publisher, evidence claims, and authoritative source URLs.
 
-### 4. Conservative Decision Rules
-* **Rule A (Exact Public Artifact Match)**: Local SHA-256 matches NIST NSRL or public GitHub release asset digest $\to$ `THIRD_PARTY` (`VERY_HIGH` confidence).
-* **Rule B (Strong Publisher/Product Provenance)**: Trusted external code-signing certificate or recognized publisher manifest $\to$ `THIRD_PARTY` (`HIGH` confidence).
-* **Rule C (Strong Build/Project Provenance)**: Embedded Go module path identifies a public open-source project $\to$ `THIRD_PARTY` (`HIGH` confidence).
-* **Rule D (Corroborated Package Identity)**: Multi-source package/release corroboration for non-generic names $\to$ `THIRD_PARTY` (`MEDIUM` confidence).
-* **Rule E (Generic Name / Weak Search Only)**: Collision protection triggered $\to$ `UNKNOWN` (`NONE` confidence).
-* **Rule F (No External Evidence)**: Default fallback $\to$ `UNKNOWN` (`NONE` confidence). Never `COMPANY`.
-* **Rule G (Strong Company Provenance)**: Internal company certificate or company domain indicator $\to$ `COMPANY` (`HIGH` confidence).
-
-### 5. Configurable Network Modes
-* `--network=off` *(Default)*: 100% local-first, zero network requests, sub-millisecond execution. Local known hash datasets and binary inspection execute offline.
-* `--network=hash-only`: Allows outbound queries strictly for cryptographic hash reputation; no filenames or queries are transmitted.
-* `--network=on` *(or `--lookup-online`)*: Activates GitHub release digest verification, Repology candidate indexing, and web candidate discovery with fast-fail preflight probe (`1.1.1.1:53` within 350ms).
+4. **Disk-Backed Research Caching**
+   * Structured digital research findings are persisted locally in `%APPDATA%\appaudit\gemini_cache.json`.
+   * Cache keys are computed from the application identity, version, primary executable SHA-256, and suite layout.
+   * Subsequent scans retrieve results instantly from local cache (`CACHE HIT`), requiring zero network queries.
 
 ---
 
 ## Directory & Package Layout
 
-```
+```text
 cmd/audit/
-  main.go                     -> CLI flags, tripartite tables, telemetry, and interactive prompts
+  main.go                     -> CLI entrypoint, flag parsing, tripartite table rendering, interactive prompts
   console_windows.go          -> Windows Explorer double-click auto-pause detection
   console_other.go            -> Non-Windows console stub
 internal/
   model/
-    app.go                    -> Application model, Category, and noise-filtering functions
-  provenance/
-    evidence.go               -> Classification, Confidence, EvidenceType, and Artifact models
-    fingerprint.go            -> Streaming local SHA-256 hashing
-    inspector.go              -> BinaryInspector interface and BinaryMetadata
-    inspector_pe.go           -> PE header, Authenticode X.509 cert, and resource table parser
-    inspector_unix.go         -> Mach-O (debug/macho) and ELF (debug/elf) inspectors
-    inspect_build.go          -> Go debug/buildinfo reader & embedded component signatures
-    provider.go               -> Pluggable ProvenanceProvider interface
-    provider_hash.go          -> NIST NSRL & known-software hash provider
-    provider_github.go        -> GitHub release asset digest verification
-    provider_package.go       -> Repology candidate generation
-    provider_search.go        -> Search candidate discovery with OPSEC filters
-    cache.go                  -> Persistent SHA-256 keyed cache with differential TTLs
-    resolver.go               -> Multi-tier decision rules engine (Rules A–G)
-    resolver_test.go          -> Unit tests for Rules A–G, FFmpeg benchmark, generic collisions
-  classifier/
-    classifier.go             -> Coordinates host discovery with Provenance Resolver
-    classifier_test.go        -> Integration and classification tests
+    app.go                    -> Application and binary target models, executable classification filters
   scanner/
-    scanner.go                -> Platform discovery abstraction
-    scanner_windows.go        -> Start Menu (.lnk) + Registry (64/32) + PATH + Process snapshot
-    lnk_windows.go            -> Byte-level Windows .lnk shell link parser
-    scanner_darwin.go         -> macOS /Applications bundle + PATH + process crawler
-    scanner_linux.go          -> Linux XDG .desktop + PATH + /proc PID/exe crawler
+    scanner.go                -> Platform scanner abstraction
+    scanner_windows.go        -> Windows Start Menu (.lnk) + Registry (64/32) + PATH discovery
+    lnk_windows.go            -> Windows .lnk shell link parser
+    scanner_darwin.go         -> macOS bundle & path discovery
+    scanner_linux.go          -> Linux desktop & path discovery
+  application/
+    engine.go                 -> Main discovery, grouping, inspection, and classification engine
+    reconciler.go             -> Groups related executables into cohesive application suites
+    decision.go               -> Deterministic recognition rules and Gemini grounding gate
+    identity.go               -> Candidate application naming and structural heuristic signals
+    evidence.go               -> Evidence bundle and claim representations
+    model.go                  -> Application data structures
+  provenance/
+    evidence.go               -> Classification, Confidence, EvidenceType, and NetworkMode models
+    fingerprint.go            -> Streaming local SHA-256 fingerprinting
+    inspector.go              -> BinaryInspector abstraction and metadata models
+    inspector_pe.go           -> Authenticode X.509 cert extraction, PE headers, version resources
+    inspect_build.go          -> Go debug/buildinfo reader & embedded component signatures
+    inspector_unix.go         -> ELF and Mach-O inspection
+    cache.go                  -> Binary forensic inspection cache
+  ai/
+    gemini.go                 -> Gemini Reasoner with Google Search grounding
+    gemini_cache.go           -> Disk-backed research cache (%APPDATA%\appaudit\gemini_cache.json)
+    deepseek.go               -> DeepSeek Reasoner with credit-conservation safeguards
+    deepseek_cache.go         -> Disk-backed research cache (%APPDATA%\appaudit\deepseek_cache.json)
+    credentials.go            -> Secure local credential storage (%APPDATA%\appaudit\credentials.json)
+    reasoner.go               -> Reasoner interface & reasoning result schema
+    local.go                  -> Optional local LLM reasoner
+    mock.go                   -> Test mock reasoner
+    noop.go                   -> No-op offline fallback reasoner
+  report/
+    report.go                 -> Explanatory terminal report & JSON formatter
 ```
 
 ---
 
-## CLI Usage
+## Usage
 
-### 1. Default Offline Scan (Local-First)
-```bash
-audit
-```
-Outputs 3 explainable tables:
-* `[Third-Party / Public Commercial Software]` (Name, Publisher, Confidence, SHA-256, Evidence)
-* `[Company-Owned / Internal Proprietary Software]` (Name, Confidence, Path, Ownership Evidence)
-* `[Unknown / Unresolved Provenance]` (Name, Path, SHA-256, Primary Reason)
+### 1. Interactive Dual-Mode Launcher (Default)
+When opened without flags or double-clicked from File Explorer / Desktop, AppAudit prompts you to choose your interface:
+```text
+================================================================================
+ AppAudit - Endpoint Software Provenance Auditor (v2.1.0)
+================================================================================
 
-### 2. Full Online Provenance Resolution
-```bash
-audit --network=on
-# or shorthand:
-audit -online
+Select how you would like to run AppAudit:
+  [1] Web Dashboard (Recommended - Interactive UI, Drag & Drop, Engine Comparison)
+  [2] Command Line Interface (CLI - Fast, Interactive Terminal Wizard & Reports)
+
+Enter choice [1-2] (default: 1): 
 ```
 
-### 3. Hash-Only Intelligence (Zero Metadata Leakage)
+- **[1] Web Dashboard**: Launches the embedded HTTP server on `http://localhost:8085`, automatically opens your default browser, shares a Wi-Fi URL for colleagues, and provides a drag-and-drop UI, side-by-side engine benchmark comparisons, 4-stage early exit tracking, token economics, and dual-tier logs.
+- **[2] Command Line Interface**: Steps through the interactive 2-step terminal setup wizard with full offline/cloud AI reasoning, targeted tier scanning, and in-house company app registration.
+
+### 2. Direct Subcommand Invocations
 ```bash
-audit --network=hash-only
+# Launch Web Dashboard directly:
+audit web
+# or:
+audit serve --port 8085
+
+# Launch interactive CLI wizard directly:
+audit cli
+
+# Non-interactive CLI scans:
+audit scan
+audit scan --quick
+audit analyze "C:\Tools\myutility.exe"
 ```
 
-### 4. Machine-Readable JSON Pipeline (SIEM / ITAM)
-```bash
-audit --json
+# DeepSeek (DeepSeek-V4.1-Flash with native web search via Responses API)
+audit scan --network on --ai --ai-provider deepseek
+
+# With custom model identifier or toggling native search:
+audit scan --network on --ai --ai-provider deepseek --deepseek-model deepseek-flash --deepseek-search=true
 ```
-Emits clean, structured JSON to `stdout` with complete SHA-256 fingerprints, classifications, confidence levels, and evidence explanations (telemetry is routed to `stderr`).
+Passes unresolved applications to the selected AI provider (Gemini or DeepSeek), executing server-side web research via Google Search Grounding (Gemini) or Responses API Native Search (DeepSeek), rendering authoritative sources and caching positive & inconclusive results locally.
+
+### 3. Inspect Specific Binaries or Application Folders
+```bash
+audit analyze "C:\Tools\myutility.exe" --network on --ai
+audit analyze "C:\Tools\myutility.exe" --ai-provider deepseek --deepseek-key <KEY>
+```
+
+### 4. Manage AI Credentials
+```bash
+# View configuration and stored key status
+audit config show
+
+# Store Gemini API key locally (cached in %APPDATA%\appaudit\credentials.json)
+audit config set-gemini-key <YOUR_GEMINI_API_KEY>
+audit config clear-gemini-key
+
+# Store DeepSeek API key locally
+audit config set-deepseek-key <YOUR_DEEPSEEK_API_KEY>
+audit config clear-deepseek-key
+```
+
+### 5. In-House Company Applications ("Remember this is my company's tool")
+In-house proprietary tools often don't have commercial certificates or public web hits. You can register them so AppAudit permanently remembers them as `COMPANY` with zero network overhead (0ms deterministic lookup):
+
+```bash
+# Register an internal binary (binds cryptographic SHA-256 and path)
+audit config register-company-app "C:\Tools\payroll_sync.exe"
+
+# List registered company software
+audit config list-company-apps
+
+# Remove an application from the registry
+audit config remove-company-app "payroll_sync"
+
+# Configure company certificate / domain indicators (matches code signing certs or internal Go modules)
+audit config set-company "Acme Corp,Contoso,internal.mycompany.com"
+```
+
+*Note: When running interactively or by double-clicking `audit.exe`:*
+* *Select Option `[3]` in the main menu to directly register an in-house executable by path or drag-and-drop.*
+* *At the conclusion of any scan/audit, AppAudit prompts whether to register any unrecognized applications (by number) or custom binaries (by file path).*
+
+### 6. Managing the Cache
+```bash
+# Clear stored digital research results
+audit config clear-cache
+```
+
+### 7. Structured JSON Output
+```bash
+audit analyze "C:\Program Files\Git" --json
+```
 
 ---
 
-## What the System Can and Cannot Establish
+## Verification & Testing
 
-### What It Can Establish
-* **Definitive Public Artifacts:** Exact matching of local SHA-256 digests against verified release assets or NSRL records.
-* **Verified Commercial Publishers:** Authenticode code-signing certificates and official vendor product resources.
-* **Public Build Provenance:** Go main module paths and open-source project repository origins.
-* **Explainable Evidence Chains:** Explicit auditable reasons for every classification decision.
+AppAudit includes comprehensive test suites protecting deterministic filtering, adversarial boundary integrity, and caching:
 
-### Fundamental Limitations from an Executable Alone
-* **Proprietary Binaries Without Internal Records:** If a company develops a secret internal tool, leaves it unsigned, and provides no company repository connectors or certificate indicators, the tool is classified as **`UNKNOWN`**, not `COMPANY`.
-* **Private Modifications of Public Projects:** If an organization forks an open-source project and compiles it internally without adding company metadata or signatures, the binary will either match the base project components or be classified as `UNKNOWN`.
-* **Absence of Proof is Not Proof of Absence:** The engine never guesses or claims an unknown binary is company-owned simply because public databases do not know about it.
+```bash
+# Run code analysis
+go vet ./...
+
+# Run all unit and integration tests
+go test ./...
+
+# Compile production binary
+go build ./cmd/audit
+```
